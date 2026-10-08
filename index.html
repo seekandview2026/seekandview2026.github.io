@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seek-and-View Reasoning for Multi-View Spatial Understanding</title>
+<meta name="description" content="Seek-and-View seeks cross-view spatial evidence through a question-relevant viewpoint instead of reasoning over fixed views. Vantage realizes it as a two-stage training-free framework coupling a VLM with a 3D foundation model.">
+<style>
+  :root{
+    --ink:#161c26; --sub:#5d6674; --line:#e4e8ef; --bg:#ffffff; --soft:#f5f7fb;
+    --vlm:#2f6ad0;        /* VLM / reasoning (blue, as in the paper figures) */
+    --geo:#15855a;        /* 3D foundation model / geometry (green) */
+    --warm:#cf7a1f;       /* question & inputs (amber) */
+    --bad:#c0392b;
+    --radius:14px;
+    --serif:"Charter","Georgia",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;scroll-padding-top:92px;color-scheme:light}
+  body{font-family:var(--sans);color:var(--ink);background:var(--bg);line-height:1.65;font-size:16.5px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 22px}
+  .wrap.narrow{max-width:820px}
+  section{padding:52px 0}
+  h1{font-family:var(--serif);font-size:clamp(1.45rem,5.6vw,2.75rem);line-height:1.18;text-align:center;font-weight:700;letter-spacing:-.01em;text-wrap:balance}
+  h2{font-family:var(--serif);font-size:1.62rem;margin-bottom:6px;text-align:center;letter-spacing:-.01em}
+  h3{font-size:1.04rem;margin-bottom:7px}
+  p{margin-bottom:12px}
+  a{color:var(--vlm)}
+  .sub{color:var(--sub)}
+  .lead{color:var(--sub);text-align:center;max-width:720px;margin:0 auto 26px;font-size:1rem}
+  .lead.wide{max-width:940px;text-wrap:balance}
+  img{max-width:100%;display:block}
+  .figcap{font-size:.88rem;color:var(--sub);margin-top:10px;text-align:center;max-width:870px;margin-left:auto;margin-right:auto;text-wrap:balance}
+  .figcap.wide{max-width:980px;text-wrap:balance}
+  .altband{background:var(--soft);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .kicker{text-align:center;font-size:.76rem;letter-spacing:.14em;text-transform:uppercase;color:var(--sub);margin-bottom:10px;font-weight:600}
+
+  /* ---- nav ---- */
+  nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.88);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  /* wraps to a second row rather than pushing items off-screen; nothing is ever hidden */
+  nav .inner{max-width:1000px;margin:0 auto;padding:7px 22px;display:flex;flex-wrap:wrap;
+             align-items:center;justify-content:center;gap:6px 20px;min-height:50px}
+  nav .brand{font-family:var(--serif);font-weight:700;letter-spacing:.01em;margin-right:auto}
+  nav .brand .dot{color:var(--geo)}
+  nav a{color:var(--sub);text-decoration:none;font-size:.88rem;white-space:nowrap}
+  nav a:hover{color:var(--ink)}
+  @media(max-width:700px){
+    /* tighten enough that a phone still gets one row, and centre the brand with the links */
+    nav .inner{padding:6px 12px;gap:4px 14px;min-height:46px}
+    nav .brand{margin-right:0;flex-basis:100%;text-align:center;font-size:.95rem}
+    nav a{font-size:.8rem}
+  }
+  @media(max-width:360px){nav .brand{display:none}}
+
+  /* ---- hero ---- */
+  header{padding:54px 0 30px;background:
+      radial-gradient(900px 300px at 50% -60px, #eef4ff 0%, rgba(255,255,255,0) 70%),
+      linear-gradient(#fcfdff,#fff)}
+  .eyebrow{text-align:center;font-size:.8rem;letter-spacing:.12em;text-transform:uppercase;color:var(--geo);font-weight:700;margin-bottom:12px}
+  h1 .nm{color:var(--geo)}
+  @media(max-width:720px){br.wide{display:none}}
+  .tagline{text-align:center;color:var(--sub);margin-top:14px;font-size:1.05rem;max-width:660px;margin-left:auto;margin-right:auto}
+  .authors{margin-top:26px;text-align:center}
+  .authors .names{font-size:1.18rem;line-height:1.8;margin-bottom:8px}
+  .authors .names a{color:var(--ink);text-decoration:none}
+  .authors .names a[href]{color:var(--vlm);border-bottom:1px solid rgba(47,106,208,.3)}
+  .authors .names a[href]:hover{border-bottom-color:var(--vlm)}
+  .authors sup{font-size:.68em;color:var(--sub);padding-left:1px}
+  .affil{color:var(--sub);font-size:1.02rem;margin-bottom:0}
+  .affil span{white-space:nowrap}
+  @media(max-width:620px){.authors .names{font-size:1.05rem}.affil{font-size:.95rem}}
+  .btns{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:24px 0 4px}
+  .btn{display:inline-flex;align-items:center;gap:8px;background:#eef6f1;color:#0e6e49;
+       border:1px solid #cfe6da;border-radius:999px;padding:9px 20px;font-size:.94rem;
+       text-decoration:none;transition:.15s;box-shadow:0 1px 2px rgba(22,28,38,.04)}
+  .btn:hover{transform:translateY(-1px);background:#e2efe8;border-color:#a9d4c0}
+  .btn .tag{font-size:.7rem;background:rgba(22,28,38,.07);border-radius:6px;padding:1px 6px}
+  .btn .ic{width:17px;height:17px;fill:currentColor;flex:none}
+  /* arXiv mark, 448x512 viewBox so it is set by height and follows the button colour */
+  .btn .axi{height:17px;width:15px;fill:currentColor;flex:none}
+
+  /* ---- one-line idea strip ---- */
+  .idea{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:10px;margin:30px 0 4px}
+  .chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 15px;font-size:.9rem;box-shadow:0 1px 2px rgba(22,28,38,.04)}
+  .chip.b{border-color:#c6d9f6;color:var(--vlm);font-weight:600}
+  .chip.g{border-color:#bfe4d2;color:var(--geo);font-weight:600}
+  .chip.w{border-color:#f0dcc0;color:var(--warm);font-weight:600}
+  .arrow{color:#aab2bf;font-size:1.1rem}
+
+  /* ---- generic cards ---- */
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:700px){.two{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:var(--radius);padding:19px 21px;background:#fff}
+  .card.bad{border-top:3px solid var(--bad)} .card.bad h3{color:var(--bad)}
+  .card p{font-size:.93rem;color:var(--sub);margin:0}
+  .card h3 + p{margin-top:0}
+
+  /* ---- paradigm compare ---- */
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:stretch;margin-top:8px}
+  @media(max-width:760px){.vs{grid-template-columns:1fr}}
+  .pane{border:1px solid var(--line);border-radius:var(--radius);padding:17px 20px;background:#fff}
+  .pane.old{background:#fdf7f6;border-color:#f1dcd8}
+  .pane.new{background:#f3faf6;border-color:#cfe9db}
+  .pane h3{font-family:var(--serif);font-size:1.12rem}
+  .pane .sub{font-size:.93rem;margin:5px 0 0}
+  .pane .tagy{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;font-weight:700;margin-bottom:6px}
+  .pane.old .tagy{color:var(--bad)} .pane.new .tagy{color:var(--geo)}
+  .pane ul{margin:8px 0 0 0;padding-left:18px;font-size:.92rem;color:var(--sub);line-height:1.5}
+  .pane li{margin-bottom:4px}
+
+  /* ---- stats ---- */
+
+  /* ---- bar chart ---- */
+  .bars{margin:4px 0 6px}
+  .barrow{display:grid;grid-template-columns:150px minmax(0,1fr) 62px;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+  .barrow:last-child{border-bottom:none}
+  .barrow .mdl{font-size:.9rem;font-weight:600}
+  .barrow .track{position:relative;height:34px}
+  .lane{position:relative;width:calc(100% - 44px);height:100%}
+  .bar{position:absolute;left:0;height:14px;border-radius:7px;transform-origin:left center;
+       transition:transform 1.0s cubic-bezier(.22,.8,.3,1)}
+  .bar.base{top:1px;background:#c9d1dc}
+  .bar.vant{top:19px;background:linear-gradient(90deg,var(--vlm),var(--geo))}
+  .lane .v{position:absolute;margin-left:9px;font-size:.78rem;color:var(--sub);font-variant-numeric:tabular-nums;
+       white-space:nowrap;transition:opacity .5s .5s}
+  .lane .v.base{top:-2px}
+  .lane .v.vant{top:16px;color:var(--ink);font-weight:700}
+  .bars.pre .bar{transform:scaleX(0)}
+  .bars.pre .v{opacity:0}
+  @media(prefers-reduced-motion:reduce){.bars.pre .bar{transform:none}.bars.pre .v{opacity:1}}
+  .barrow .gain{font-size:.86rem;font-weight:700;color:var(--geo);text-align:right;font-variant-numeric:tabular-nums}
+  .barlegend{display:flex;gap:18px;justify-content:center;font-size:.82rem;color:var(--sub);margin-bottom:10px}
+  .barlegend i{display:inline-block;width:22px;height:9px;border-radius:5px;vertical-align:middle;margin-right:6px}
+  @media(max-width:620px){.barrow{grid-template-columns:104px minmax(0,1fr) 54px}.lane .v{font-size:.72rem}}
+
+  /* ---- tables ---- */
+  .tblwrap{overflow-x:auto;margin-top:6px;-webkit-overflow-scrolling:touch}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:620px;background:#fff}
+  th,td{padding:7px 10px;text-align:center;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  th{font-size:.78rem;letter-spacing:.03em;color:var(--sub);border-bottom:2px solid var(--ink);font-weight:600;white-space:nowrap}
+  tr.grp td{text-align:left;font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;font-weight:700;
+            color:var(--sub);background:#eef1f6;padding:5px 10px}
+  td .base{font-size:.78rem;color:var(--sub)}
+  td:first-child,th:first-child{text-align:left;white-space:nowrap}
+  tr.hl td{background:#f2f8f5}
+  tr.hl td:first-child{font-weight:600}
+  tr.sep td{border-top:1px solid #cfd6e0}
+  .ref td{color:var(--sub);background:#fafbfd}
+  .up{color:var(--geo);font-weight:700}
+  .dn{color:var(--bad)}
+  td b{font-weight:700}
+
+  /* ---- tabs ---- */
+  .tabs{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:18px 0 16px}
+  .tab{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 15px;font-size:.84rem;cursor:pointer;color:var(--sub);transition:.14s;font-family:inherit}
+  .tab:hover{border-color:#b9c2d0}
+  .tab.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .panel{display:none} .panel.on{display:block;animation:fade .35s}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .shot{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 6px 22px rgba(22,28,38,.07)}
+  /* side-by-side figure row, proportioned so both halves end up the same height */
+  .figrow{--w:min(1180px, calc(100vw - 44px));
+          display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,2.1fr);gap:18px;align-items:center;
+          width:var(--w);margin-left:calc((100% - var(--w)) / 2)}
+  .figrow > img{width:100%}
+  @media(max-width:820px){
+    .figrow{grid-template-columns:1fr;width:100%;margin-left:0;gap:22px}
+    .figrow > img{max-width:460px;margin:0 auto}
+  }
+
+  /* ---- action set ---- */
+
+  /* ---- failure legend ---- */
+  .flegend{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;font-size:.84rem;color:var(--sub);margin:16px 0 6px}
+  .flegend span i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px}
+
+  /* ---- bibtex ---- */
+  pre.bib{background:#111826;color:#dbe4f3;border-radius:var(--radius);padding:20px 24px;font-size:.84rem;overflow-x:auto;line-height:1.55;font-family:var(--mono)}
+  .copybtn{float:right;background:#2a3550;color:#fff;border:none;border-radius:8px;padding:4px 12px;font-size:.78rem;cursor:pointer;font-family:inherit}
+  .copybtn:hover{background:#3a4868}
+
+  footer{border-top:1px solid var(--line);padding:28px 0 44px;color:var(--sub);font-size:.86rem;text-align:center}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="inner">
+    <span class="brand">Vantage</span>
+    <a href="#motivation">Motivation</a>
+    <a href="#method">Method</a>
+    <a href="#results">Results</a>
+    <a href="#discussion">Discussion</a>
+    <a href="#bibtex">BibTeX</a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header>
+  <div class="wrap">
+    <h1><span class="nm">Seek-and-View Reasoning</span> for <br class="wide"> Multi-View Spatial Understanding</h1>
+
+    <div class="authors">
+      <p class="names">
+        <a>Qixiang Chen</a><sup>1</sup>,
+        <a>Cheng Zhang</a><sup>1</sup>,
+        <a>Fucai Ke</a><sup>1</sup>,
+        <a>Chi-Wing Fu</a><sup>2</sup>,
+        <a>Jianfei Cai</a><sup>1</sup>,
+        <a>Jingwen Ye</a><sup>1</sup>
+      </p>
+      <p class="affil">
+        <span><sup>1</sup>Monash University</span> &nbsp;&nbsp;
+        <span><sup>2</sup>The Chinese University of Hong Kong</span>
+      </p>
+    </div>
+
+    <div class="btns">
+      <a class="btn" href="https://arxiv.org/abs/2610.11810" target="_blank" rel="noopener"><!-- arXiv mark from Academicons, https://jpswalsh.github.io/academicons, SIL OFL 1.1 --><svg class="axi" viewBox="0 0 448 512" aria-hidden="true"><g transform="matrix(1.5499998,0,0,-1.5499998,-123.19936,553.59966)"><path fill="currentColor" d="m 119.65,351.996 c -5.84961,0.13477 -11.1943,-3.29883 -13.502,-8.67578 -2.19629,-5.27051 -0.61914,-8.9668 4.19727,-15.8652 7.05469,-10.3799 78.8242,-96.5625 78.8242,-96.5625 l -15.8828,-14.8633 c -13.3809,-13.3779 -13.9561,-31.333 -1.50977,-43.7754 l 18.4922,-17.6133 -51.5977,-63.377 c -4.00586,-4.26758 -6.48535,-11.7559 -4.24805,-17.1309 2.27832,-5.53613 7.69727,-9.12891 13.6836,-9.07031 3.83398,0.0957 7.43262,1.87402 9.83789,4.86133 l 61.3691,57.0566 94.5762,-90.0703 c 3.19434,-3.08398 7.44336,-4.83984 11.8828,-4.91016 1.60449,0.0039 3.19824,0.245117 4.73242,0.714844 5.7793,1.80566 10.249,6.41797 11.8711,12.252 1.2998,5.47363 -0.27637,11.2334 -4.18164,15.2832 l -83.0859,100.011996 14.8789,13.834 c 11.0957,10.0029 11.1543,27.3906 0.12695,37.4688 l -16.2949,15.6309 56.2559,66.4434 0.0742,0.0859 0.0664,0.0899 c 5.02734,6.53125 7.43164,11.5615 4.83984,17.9395 -3.13379,5.96875 -8.69727,10.29 -15.2559,11.8516 -0.67676,0.0908 -1.35938,0.13574 -2.04297,0.13671 l -0.004,-0.0117 c -4.42871,-0.27051 -8.61035,-2.13086 -11.7754,-5.24023 l -0.13086,-0.10743 -0.12304,-0.11132 -65.207,-59.127 -89.8965,86.2402 c 0,0 -5.33398,6.47754 -10.9707,6.61133 z m 178.104,-33.041 c 0.47852,-0.002 0.95703,-0.0332 1.43164,-0.0957 4.84277,-1.33301 8.95605,-4.54004 11.4316,-8.91016 1.44922,-3.5625 1.00293,-6.45703 -4.19727,-13.2148 l -56.0586,-66.2188 -26.375,25.3027 64.9551,58.9062 c 2.33887,2.41504 5.46484,3.91113 8.8125,4.2168 v 0.0137 z M 192.436,227.402 334.446,57.244 c 2.78711,-3.48926 4.5293,-6.97949 3.3418,-10.9121 -1.16113,-4.30273 -4.43457,-7.71777 -8.68555,-9.05664 -1.08105,-0.333984 -2.20508,-0.503906 -3.33594,-0.505859 -3.20801,0.07617 -6.26953,1.35645 -8.57617,3.58789 l -142.033,135.284999 c -11.1719,11.1719 -9.48242,26.0195 1.39258,36.8945 z"/></g></svg> Paper</a>
+      <a class="btn" href="https://github.com/q1xiangchen/Vantage" target="_blank" rel="noopener"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> Code</a>
+    </div>
+  </div>
+</header>
+
+<!-- ============ TEASER ============ -->
+<section style="padding-top:0px">
+  <div class="wrap">
+    <div class="shot"><img src="assets/figures/teaser.png" alt="teaser image"></div>
+    <p class="figcap"><b>(a)</b> Existing approaches reason over fixed views, suffering from fragile cross-view alignment and the geometry-to-language bottleneck. <b>(b)</b> Our novel Seek-and-View reasoning paradigm seeks a question-relevant view (see bottom right) to make the spatial evidence directly observable.</p>
+  </div>
+</section>
+
+<!-- ============ ABSTRACT ============ -->
+<section id="abstract" class="altband" style="padding:40px 0">
+  <div class="wrap narrow">
+    <div class="kicker">Abstract</div>
+    <p style="text-align:justify;margin:0">
+      Existing approaches to multi-view spatial reasoning operate largely on sparse input views. Vision-language models
+      (VLMs) are thus restricted to understand a scene and infer spatial relations within these fixed views, leading to
+      fragile cross-view alignment and geometry-to-language bottleneck. To address these issues, we formulate a novel
+      <b>Seek-and-View</b> reasoning approach to find implicit cross-view spatial evidence by locating a question-relevant
+      view to support the spatial reasoning. To realize this approach, we propose <b>Vantage</b>, a training-free
+      model-agnostic reasoning framework that pairs a VLM with a 3D foundation model, a viewpoint-grounded reasoning stage
+      for question analysis and view planning, followed by a geometry-grounded evidence augmentation stage to effectively
+      synthesize and incorporate visual evidence into the final reasoning. Comprehensive experiments on six VLMs demonstrate
+      consistent improvements on five benchmarks without fine-tuning. Overall, by revealing spatial evidence through
+      view-grounded reasoning, Vantage can largely reduce reliance on language-based cross-view alignment and improve
+      multi-view spatial understanding.
+    </p>
+  </div>
+</section>
+
+<!-- ============ MOTIVATION ============ -->
+<section id="motivation">
+  <div class="wrap">
+    <div class="kicker">Motivation</div>
+    <h2>What still limits multi-view spatial reasoning?</h2>
+
+    <div class="two" style="margin:24px 0 16px">
+      <div class="card bad">
+        <h3>Fragile cross-view alignment</h3>
+        <p>Strong semantic and contextual reasoning ability does not inherently enforce the structured, globally
+          consistent geometric constraints required across views, leaving the alignment implicit and error-prone.</p>
+      </div>
+      <div class="card bad">
+        <h3>Geometry-to-language bottleneck</h3>
+        <p>Upon compressing the spatial geometry into discrete semantic descriptions, the reasoning would potentially overlook fine-grained spatial information.</p>
+      </div>
+    </div>
+
+    <div class="vs">
+      <div class="pane old">
+        <div class="tagy">The usual paradigm</div>
+        <h3>View-and-Reason</h3>
+        <p class="sub">Reasoning stays passive over the fixed, sparse observations.</p>
+        <ul>
+          <li>Verbalized geometry, such as cognitive maps, scene graphs, or bounding boxes</li>
+          <li>Injected geometric priors, such as 3D positional encoding, feature fusion, or reconstructive supervision</li>
+        </ul>
+      </div>
+      <div class="pane new">
+        <div class="tagy">Ours</div>
+        <h3>Seek-and-View</h3>
+        <p class="sub">Reasoning seeks a question-relevant view that makes the spatial evidence directly observable.</p>
+        <ul>
+          <li>Question-relevant, evidence-seeking, and reasoning-oriented visual evidence acquisition</li>
+          <li>Spatial cues grounded in scene geometry and presented directly as visual evidence</li>
+        </ul>
+      </div>
+    </div>
+    <p class="figcap" style="margin-top:14px">Humans can conceptualize the 3D structure of a scene and seek a vantage viewpoint that resolves the spatial relation. Vantage gives a VLM the same option.</p>
+  </div>
+</section>
+
+<!-- ============ METHOD ============ -->
+<section id="method" class="altband">
+  <div class="wrap">
+    <div class="kicker">Method</div>
+    <h2>Overview of the Vantage pipeline</h2>
+    <p class="lead wide">We propose Vantage, a two-stage training-free and model-agnostic framework with a viewpoint-grounded reasoning stage and a geometry-grounded evidence augmentation stage, explicitly coupling VLM reasoning with a 3D foundation model.</p>
+
+    <div class="shot"><img src="assets/figures/pipeline.png" alt="Vantage pipeline" loading="lazy" decoding="async"></div>
+    <p class="figcap">
+      <b>(a)</b> The VLM first analyses the question and identifies the observation needs.
+      <b>(b)</b> It then plans a question-relevant view and generates reasoning guidance specifying which spatial cues should be examined.
+      <b>(c)</b> A 3D foundation model reconstructs the scene and realizes the planned view in a gravity-aligned coordinate frame.
+      <b>(d)</b> The VLM finally answers the question with the original observations augmented by the synthesized view and supporting reasoning context.
+    </p>
+  </div>
+</section>
+
+<!-- ============ RESULTS ============ -->
+<section id="results">
+  <div class="wrap">
+    <div class="kicker">Results</div>
+    <h2>Consistent gains, no additional training</h2>
+    <p class="lead wide">
+    Across five spatial reasoning benchmarks and six VLMs spanning a wide range of model scales, Vantage consistently improves the average accuracy of all six models without any additional training.
+    </p>
+
+    <div class="barlegend">
+      <span><i style="background:#c9d1dc"></i>Base model</span>
+      <span><i style="background:linear-gradient(90deg,var(--vlm),var(--geo))"></i>+ Vantage</span>
+      <span>Average accuracy (%) over the five benchmarks</span>
+    </div>
+    <div class="bars" id="bars"></div>
+
+    <h3 style="text-align:center;font-family:var(--serif);font-size:1.15rem;margin:34px 0 4px">Per-benchmark accuracy</h3>
+    <p class="lead" style="margin-bottom:14px">Accuracy per benchmark (%); see the paper for detailed subset-level results.</p>
+    <div class="tblwrap">
+      <table>
+        <thead><tr>
+          <th>Model</th><th>MindCube-tiny</th><th>MMSI-Bench</th><th>BLINK<br>Multi-view</th><th>OmniSpatial<br>Perspective</th><th>SPINBench</th><th>Avg.</th><th>% Gain</th>
+        </tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="8">Training-scaled spatial model</td></tr>
+          <tr class="ref"><td>SenseNova-SI-1.5-InternVL3-8B</td><td>93.2</td><td>45.2</td><td>63.9</td><td>52.0</td><td>43.0</td><td>59.5</td><td>–</td></tr>
+          <tr class="grp"><td colspan="8">Model-scaled spatial agent</td></tr>
+          <tr class="ref"><td>GCA <span class="base">(Qwen3-VL-235B-A22B-Thinking)</span></td><td>64.2</td><td>51.2</td><td>–</td><td>58.6</td><td>–</td><td>–</td><td>–</td></tr>
+          <tr class="grp"><td colspan="8">Vantage on base models</td></tr>
+
+          <tr><td>Qwen3-VL-4B</td><td>26.0</td><td>27.9</td><td>41.4</td><td>42.1</td><td>53.2</td><td>38.1</td><td rowspan="2" class="up">+13.1</td></tr>
+          <tr class="hl"><td>+ Vantage</td><td><b>38.9</b></td><td><b>33.7</b></td><td><b>42.1</b></td><td><b>47.2</b></td><td><b>53.4</b></td><td><b>43.1</b></td></tr>
+
+          <tr class="sep"><td>Qwen3-VL-8B</td><td>31.3</td><td>30.1</td><td>44.4</td><td>43.9</td><td><b>53.2</b></td><td>40.6</td><td rowspan="2" class="up">+0.7</td></tr>
+          <tr class="hl"><td>+ Vantage</td><td><b>31.6</b></td><td>30.1</td><td><b>45.1</b></td><td><b>45.1</b></td><td>52.5</td><td><b>40.9</b></td></tr>
+
+          <tr class="sep"><td>InternVL3-8B</td><td>36.8</td><td>28.4</td><td>54.1</td><td><b>44.0</b></td><td>48.9</td><td>42.4</td><td rowspan="2" class="up">+4.2</td></tr>
+          <tr class="hl"><td>+ Vantage</td><td><b>39.9</b></td><td><b>30.2</b></td><td><b>55.6</b></td><td>43.9</td><td><b>51.3</b></td><td><b>44.2</b></td></tr>
+
+          <tr class="sep"><td>Qwen3.6-27B</td><td>63.0</td><td>42.3</td><td>28.6</td><td>52.6</td><td><b>89.2</b></td><td>55.1</td><td rowspan="2" class="up">+7.3</td></tr>
+          <tr class="hl"><td>+ Vantage</td><td><b>68.8</b></td><td><b>44.8</b></td><td><b>29.3</b></td><td><b>64.7</b></td><td>88.0</td><td><b>59.1</b></td></tr>
+
+          <tr class="sep"><td>Gemma-4-31B</td><td>53.5</td><td>36.8</td><td>36.1</td><td>51.7</td><td>71.1</td><td>49.8</td><td rowspan="2" class="up">+9.4</td></tr>
+          <tr class="hl"><td>+ Vantage</td><td><b>61.9</b></td><td><b>37.1</b></td><td><b>44.4</b></td><td><b>55.1</b></td><td><b>73.9</b></td><td><b>54.5</b></td></tr>
+
+          <tr class="sep"><td>GPT-5.4</td><td>44.2</td><td>34.4</td><td>48.1</td><td>47.4</td><td>59.3</td><td>46.7</td><td rowspan="2" class="up">+14.3</td></tr>
+          <tr class="hl"><td>+ Vantage</td><td><b>54.3</b></td><td><b>41.1</b></td><td><b>54.1</b></td><td><b>53.7</b></td><td><b>63.9</b></td><td><b>53.4</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="figcap wide">
+      The two reference rows achieve SOTA performance through either large-scale spatial-task training or tool-integrated agents built on substantially larger VLMs. In contrast, Vantage is training-free, leaves the base models unchanged, and generalizes across a wide range of model scales.
+    </p>
+
+    <h3 style="text-align:center;font-family:var(--serif);font-size:1.2rem;margin:46px 0 4px">Qualitative examples</h3>
+    <p class="lead wide">Qualitative example of Vantage with GPT-5.4. For clarity, we simplify the original model outputs and present only the key intermediate information relevant to the reasoning process.</p>
+
+    <div class="tabs" id="csTabs">
+      <button class="tab active" data-p="cs1">Case 1</button>
+      <button class="tab" data-p="cs2">Case 2</button>
+      <button class="tab" data-p="cs3">Case 3</button>
+      <button class="tab" data-p="cs4">Case 4</button>
+    </div>
+
+    <div class="panel on" id="cs1">
+      <div class="shot"><img src="assets/figures/case_study_1.png" alt="Case study 1" loading="lazy" decoding="async"></div>
+    </div>
+    <div class="panel" id="cs2">
+      <div class="shot"><img src="assets/figures/case_study_2.png" alt="Case study 2" loading="lazy" decoding="async"></div>
+    </div>
+    <div class="panel" id="cs3">
+      <div class="shot"><img src="assets/figures/case_study_3.png" alt="Case study 3" loading="lazy" decoding="async"></div>
+    </div>
+    <div class="panel" id="cs4">
+      <div class="shot"><img src="assets/figures/case_study_4.png" alt="Case study 4" loading="lazy" decoding="async"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ANALYSIS ============ -->
+<section id="discussion" class="altband">
+  <div class="wrap">
+    <div class="kicker">Discussion</div>
+    <h2>Where current VLMs + Seek-and-View still fail</h2>
+
+    <div class="figrow">
+      <img src="assets/figures/failure_absolute.png" alt="Macro-averaged failure analysis across four models"
+           loading="lazy" decoding="async">
+      <div class="shot"><img src="assets/figures/failure_case.png"
+           alt="Representative failure case for each of the four failure types" loading="lazy" decoding="async"></div>
+    </div>
+    <p class="figcap wide">
+      <b>Left</b> Macro-averaged failure analysis. <b>Right</b> Representative failure cases by type.
+    </p>
+    <p class="lead wide" style="margin-top:22px;margin-bottom:0">
+      We perform a failure audit across multiple models and multi-view benchmarks to identify the dominant failure modes of Seek-and-View.
+      Most residual errors arise from
+      <span style="background:#FCB84D;color:#7A4A00;font-weight:600;padding:1px 4px;border-radius:4px">incorrect analysis</span>
+      and
+      <span style="background:#FFF3C7;color:#7A641E;font-weight:600;padding:1px 4px;border-radius:4px">incorrect view planning</span>,
+      indicating that deciding <i>what</i> should be seen and <i>how</i> to reach it remains the main bottleneck.
+      <span style="background:#5CA7D9;color:#0E4F78;font-weight:600;padding:1px 4px;border-radius:4px">Unreliable synthesis</span>
+      is comparatively rare and mostly occurs under challenging visual conditions, suggesting that Seek-and-View can tolerate imperfect rendering as long as the synthesized view preserves sufficient geometric and semantic evidence.
+      <span style="background:#A6DDED;color:#2B6677;font-weight:600;padding:1px 4px;border-radius:4px">Reasoning failures</span>
+      arise when the final VLM under-utilizes useful evidence in the sought view or produces an inconsistent reasoning trace.
+    </p>
+  </div>
+</section>
+
+<!-- ============ BIBTEX ============ -->
+<section id="bibtex">
+  <div class="wrap narrow">
+    <h2 style="margin-bottom:16px">BibTeX</h2>
+    <p class="lead">If you find this work interesting or relevant to your research, please consider citing our paper 😊</p>
+    <pre class="bib"><button class="copybtn" onclick="copyBib(this)">Copy</button><code id="bibcode">@misc{chen2026seekandviewreasoningmultiviewspatial,
+      title={Seek-and-View Reasoning for Multi-View Spatial Understanding}, 
+      author={Qixiang Chen and Cheng Zhang and Fucai Ke and Chi-Wing Fu and Jianfei Cai and Jingwen Ye},
+      year={2026},
+      eprint={2610.11810},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2610.11810}, 
+}</code></pre>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Project page for <i>Seek-and-View Reasoning for Multi-View Spatial Understanding</i>.<br>
+    Images are taken from MindCube, MMSI-Bench, BLINK benchmarks and are shown for illustration only.
+  </div>
+</footer>
+
+<script>
+/* ---------- results bars ---------- */
+const ROWS = [
+  {m:"Qwen3-VL-4B",  b:38.1, v:43.1, g:"+13.1%"},
+  {m:"Qwen3-VL-8B",  b:40.6, v:40.9, g:"+0.7%"},
+  {m:"InternVL3-8B", b:42.4, v:44.2, g:"+4.2%"},
+  {m:"Qwen3.6-27B",  b:55.1, v:59.1, g:"+7.3%"},
+  {m:"Gemma-4-31B",  b:49.8, v:54.5, g:"+9.4%"},
+  {m:"GPT-5.4",      b:46.7, v:53.4, g:"+14.3%"}
+];
+const MAX = 70;                                  /* axis maximum for the bar lengths */
+const barsEl = document.getElementById("bars");
+const pct = v => (v / MAX * 100).toFixed(2) + "%";
+ROWS.forEach(r=>{
+  const row = document.createElement("div");
+  row.className = "barrow";
+  row.innerHTML =
+    '<div class="mdl">'+r.m+'</div>'+
+    '<div class="track"><div class="lane">'+
+      '<div class="bar base" style="width:'+pct(r.b)+'"></div>'+
+      '<span class="v base" style="left:'+pct(r.b)+'">'+r.b.toFixed(1)+'</span>'+
+      '<div class="bar vant" style="width:'+pct(r.v)+'"></div>'+
+      '<span class="v vant" style="left:'+pct(r.v)+'">'+r.v.toFixed(1)+'</span>'+
+    '</div></div>'+
+    '<div class="gain">'+r.g+'</div>';
+  barsEl.appendChild(row);
+});
+/* bars are laid out at full width; the class only holds them back until they scroll in */
+barsEl.classList.add("pre");
+const grow = ()=>barsEl.classList.remove("pre");
+if ("IntersectionObserver" in window){
+  const io = new IntersectionObserver(es=>{
+    if (es.some(e=>e.isIntersecting)){ grow(); io.disconnect(); }
+  },{threshold:.2});
+  io.observe(barsEl);
+  setTimeout(grow, 3000);   /* never leave the chart collapsed */
+} else { grow(); }
+
+/* ---------- tab groups ---------- */
+document.querySelectorAll("#csTabs").forEach(group=>{
+  group.addEventListener("click", e=>{
+    const t = e.target.closest(".tab"); if(!t) return;
+    const ids = [...group.querySelectorAll(".tab")].map(x=>x.dataset.p);
+    group.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active", x===t));
+    ids.forEach(id=>document.getElementById(id).classList.toggle("on", id===t.dataset.p));
+  });
+});
+
+/* ---------- bibtex ---------- */
+function copyBib(btn){
+  navigator.clipboard.writeText(document.getElementById("bibcode").innerText).then(()=>{
+    const old = btn.textContent; btn.textContent = "Copied"; setTimeout(()=>btn.textContent=old, 1400);
+  });
+}
+</script>
+</body>
+</html>

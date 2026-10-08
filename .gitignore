@@ -1,0 +1,4 @@
+# local-only: build tooling and working notes, not part of the published site
+tools/
+README.md
+.DS_Store
